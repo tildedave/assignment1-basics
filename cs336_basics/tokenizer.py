@@ -143,13 +143,13 @@ def bpe(s: str, *, vocab_size, special_tokens=None, whitespace=False) -> tuple[V
     else:
         pretokens = pretokenize(s, whitespace=whitespace)
 
+    print("pretokenization complete")
     word_frequency: Counter[tuple[bytes, ...]] = Counter()
     for t in pretokens:
         # vocab item becomes a tuple of bytes low -> 'l','o','w', each item in
         # the tuple is a bytes
         word_frequency[tuple(bytes([b]) for b in t)] += 1
 
-    merge_num = 0
     while len(vocab) < vocab_size:
         freq: Counter[tuple[bytes, bytes]] = Counter()
         for v in word_frequency:
@@ -174,7 +174,7 @@ def bpe(s: str, *, vocab_size, special_tokens=None, whitespace=False) -> tuple[V
             new_frequency[apply_merge(v, merger)] = word_frequency[v]
 
         word_frequency = new_frequency
-        merge_num += 1
+        print(len(vocab))
 
     return vocab, merges
 

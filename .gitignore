@@ -162,4 +162,4 @@ cython_debug/
 .ruff_cache/
 *.zip
 
-datasets/
+tests/fixtures/TinyStories*
