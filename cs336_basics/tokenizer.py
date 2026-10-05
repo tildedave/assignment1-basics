@@ -1,4 +1,5 @@
 import regex as re
+from copy import copy
 from collections import Counter
 from collections.abc import Iterator
 from itertools import islice, pairwise
@@ -90,14 +91,47 @@ def test_most_common_elements():
     assert most_common_elements(Counter("aaabb")) == ["a"]
 
 
-def bpe(s: str, *, num_merges=None, whitespace=False) -> tuple[list[bytes], list[tuple[bytes, bytes]]]:
-    vocab = [bytes([i]) for i in range(0, 256)]
-    vocab.append(b"<|endoftext|>")
+DEFAULT_VOCAB = {i: bytes([i]) for i in range(0, 256)}
+DEFAULT_VOCAB[257] = b"<|endoftext|>"
+
+MergeList = list[tuple[bytes, bytes]]
+Vocab = dict[int, bytes]
+
+
+def apply_merge(v: bytes, merger: tuple[bytes, bytes]):
+    for pair in pairwise(v):
+        if pair == merger:
+            break
+    else:
+        return v
+
+    # reconstruct v with the merged entity
+    # we'll just use list operations even though it's dumber, I'm too
+    # lazy to code this right
+    new_v = []
+    i = 0
+    while i < len(v):
+        if i == len(v) - 1:
+            new_v.append(v[i])
+        elif (v[i], v[i + 1]) == merger:
+            new_v.append(v[i] + v[i + 1])
+            i += 1
+        else:
+            new_v.append(v[i])
+        i += 1
+
+    return tuple(new_v)
+
+
+def bpe(s: str, *, num_merges=None, whitespace=False) -> tuple[Vocab, MergeList]:
+    vocab = copy(DEFAULT_VOCAB)
+    next_vocab_key = max(vocab.keys()) + 1
+
     merges = []
 
-    tokens = pretokenize(s, whitespace=whitespace)
+    pretokens = pretokenize(s, whitespace=whitespace)
     word_frequency: Counter[tuple[bytes, ...]] = Counter()
-    for t in tokens:
+    for t in pretokens:
         # vocab item becomes a tuple of bytes low -> 'l','o','w', each item in
         # the tuple is a bytes
         word_frequency[tuple(bytes([b]) for b in t)] += 1
@@ -121,32 +155,13 @@ def bpe(s: str, *, num_merges=None, whitespace=False) -> tuple[list[bytes], list
         # merge in our vocab now
         new_frequency: Counter[bytes] = Counter()
 
-        vocab.append(merger[0] + merger[1])
+        vocab[next_vocab_key] = merger[0] + merger[1]
+        next_vocab_key += 1
+
         merges.append(tuple([merger[0], merger[1]]))
 
         for v in word_frequency:
-            for pair in pairwise(v):
-                if pair == merger:
-                    break
-            else:
-                new_frequency[v] = word_frequency[v]
-
-            # reconstruct v with the merged entity
-            # we'll just use list operations even though it's dumber, I'm too
-            # lazy to code this right
-            new_v = []
-            i = 0
-            while i < len(v):
-                if i == len(v) - 1:
-                    new_v.append(v[i])
-                elif (v[i], v[i + 1]) == merger:
-                    new_v.append(v[i] + v[i + 1])
-                    i += 1
-                else:
-                    new_v.append(v[i])
-                i += 1
-
-            new_frequency[tuple(new_v)] = word_frequency[v]
+            new_frequency[apply_merge(v, merger)] = word_frequency[v]
 
         word_frequency = new_frequency
         merge_num += 1
@@ -159,9 +174,33 @@ def test_bpe():
 lower lower widest widest widest
 newest newest newest newest newest newest"""
     vocab, merges = bpe(text, num_merges=6, whitespace=True)
+    vocab = set(vocab.values())
+    print(vocab)
     for b in range(256):
         assert bytes([b]) in vocab
         vocab.remove(bytes([b]))
 
-    assert frozenset(vocab) == frozenset([b"<|endoftext|>", b"st", b"est", b"ow", b"low", b"west", b"ne"])
+    assert vocab == frozenset([b"<|endoftext|>", b"st", b"est", b"ow", b"low", b"west", b"ne"])
     assert merges[0:6] == [(b"s", b"t"), (b"e", b"st"), (b"o", b"w"), (b"l", b"ow"), (b"w", b"est"), (b"n", b"e")]
+
+
+def tokenize(s: str, vocab: dict[int, bytes], merges: MergeList, *, whitespace=False) -> Iterator[bytes]:
+    pretokens = pretokenize(s, whitespace=whitespace)
+    reverse_vocab = {v: k for k, v in vocab.items()}
+
+    for p in pretokens:
+        p_bytes = [bytes([b]) for b in p]
+        # apply the merges to the pre-tokens
+        # finally output the tokens
+        for merger in merges:
+            p_bytes = apply_merge(p_bytes, merger)
+
+        for b in p_bytes:
+            yield reverse_vocab[b]
+
+
+def test_tokenize():
+    vocab = {0: b" ", 1: b"a", 2: b"c", 3: b"e", 4: b"h", 5: b"t", 6: b"th", 7: b" c", 8: b" a", 9: b"the", 10: b" at"}
+    merges = [(b"t", b"h"), (b" ", b"c"), (b" ", b"a"), (b"th", b"e"), (b" a", b"t")]
+
+    assert list(tokenize("the cat ate", vocab, merges)) == [9, 7, 1, 5, 10, 3]
