@@ -3,6 +3,7 @@ from copy import copy
 from collections import Counter
 from collections.abc import Iterator
 from itertools import islice, pairwise
+from itertools import chain
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
@@ -92,7 +93,6 @@ def test_most_common_elements():
 
 
 DEFAULT_VOCAB = {i: bytes([i]) for i in range(0, 256)}
-DEFAULT_VOCAB[257] = b"<|endoftext|>"
 
 MergeList = list[tuple[bytes, bytes]]
 Vocab = dict[int, bytes]
@@ -123,13 +123,26 @@ def apply_merge(v: bytes, merger: tuple[bytes, bytes]):
     return tuple(new_v)
 
 
-def bpe(s: str, *, num_merges=None, whitespace=False) -> tuple[Vocab, MergeList]:
+def bpe(s: str, *, vocab_size, special_tokens=None, whitespace=False) -> tuple[Vocab, MergeList]:
     vocab = copy(DEFAULT_VOCAB)
     next_vocab_key = max(vocab.keys()) + 1
+    if not special_tokens:
+        special_tokens = []
+    else:
+        split_re = []
+        for special_token in special_tokens:
+            vocab[next_vocab_key] = special_token.encode()
+            next_vocab_key += 1
+            split_re.append(re.escape(special_token))
 
     merges = []
 
-    pretokens = pretokenize(s, whitespace=whitespace)
+    pretokens: Iterator[bytes]
+    if split_re:
+        pretokens = chain.from_iterable(pretokenize(part) for part in re.split("|".join(split_re), s))
+    else:
+        pretokens = pretokenize(s, whitespace=whitespace)
+
     word_frequency: Counter[tuple[bytes, ...]] = Counter()
     for t in pretokens:
         # vocab item becomes a tuple of bytes low -> 'l','o','w', each item in
@@ -137,10 +150,7 @@ def bpe(s: str, *, num_merges=None, whitespace=False) -> tuple[Vocab, MergeList]
         word_frequency[tuple(bytes([b]) for b in t)] += 1
 
     merge_num = 0
-    while True:
-        if num_merges and merge_num >= num_merges:
-            break
-
+    while len(vocab) < vocab_size:
         freq: Counter[tuple[bytes, bytes]] = Counter()
         for v in word_frequency:
             for pair in pairwise(v):
@@ -170,18 +180,19 @@ def bpe(s: str, *, num_merges=None, whitespace=False) -> tuple[Vocab, MergeList]
 
 
 def test_bpe():
-    text = """low low low low low
-lower lower widest widest widest
+    # this verifies that we don't run into issues with | I guess
+    text = """low low low low low<|endoftext|>
+lower lower widest widest widest<|endoftext|>
 newest newest newest newest newest newest"""
-    vocab, merges = bpe(text, num_merges=6, whitespace=True)
+    vocab, merges = bpe(text, vocab_size=256 + 1 + 6, special_tokens=["<|endoftext|>"], whitespace=True)
     vocab = set(vocab.values())
-    print(vocab)
+
     for b in range(256):
         assert bytes([b]) in vocab
         vocab.remove(bytes([b]))
 
     assert vocab == frozenset([b"<|endoftext|>", b"st", b"est", b"ow", b"low", b"west", b"ne"])
-    assert merges[0:6] == [(b"s", b"t"), (b"e", b"st"), (b"o", b"w"), (b"l", b"ow"), (b"w", b"est"), (b"n", b"e")]
+    assert merges == [(b"s", b"t"), (b"e", b"st"), (b"o", b"w"), (b"l", b"ow"), (b"w", b"est"), (b"n", b"e")]
 
 
 def tokenize(s: str, vocab: dict[int, bytes], merges: MergeList, *, whitespace=False) -> Iterator[bytes]:
