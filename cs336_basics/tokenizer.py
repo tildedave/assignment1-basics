@@ -1,0 +1,167 @@
+import regex as re
+from collections import Counter
+from collections.abc import Iterator
+from itertools import islice, pairwise
+
+PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+
+
+def pretokenize(s: str, *, whitespace=False) -> Iterator[bytes]:
+    if whitespace:
+        for w in re.splititer(r"\s", s):
+            yield w.encode()
+        return
+
+    it = re.finditer(PAT, s)
+    for m in it:
+        yield m.group(0).encode()
+
+
+def test_pretokenize():
+    gen = pretokenize(
+        "Call me Ishmael. Some years ago- never mind how long precisely- having little or no money in my purse, and nothing particular to interest me on shore, I thought I would sail about a little and see the watery part of the world. It is a way I have of driving off the spleen and regulating the circulation."
+    )
+    assert [b.decode("utf-8") for b in islice(gen, 10)] == [
+        "Call",
+        " me",
+        " Ishmael",
+        ".",
+        " Some",
+        " years",
+        " ago",
+        "-",
+        " never",
+        " mind",
+    ]
+
+
+def test_pretokenize_whitespace():
+    gen = pretokenize(
+        "Call me Ishmael. Some years ago- never mind how long precisely- having little or no money in my purse, and nothing particular to interest me on shore, I thought I would sail about a little and see the watery part of the world. It is a way I have of driving off the spleen and regulating the circulation.",
+        whitespace=True,
+    )
+    assert [b.decode("utf-8") for b in islice(gen, 10)] == [
+        "Call",
+        "me",
+        "Ishmael.",
+        "Some",
+        "years",
+        "ago-",
+        "never",
+        "mind",
+        "how",
+        "long",
+    ]
+
+
+def test_pretokenize_whitespace2():
+    gen = pretokenize(
+        "newest newest newest newest",
+        whitespace=True,
+    )
+    assert [b.decode("utf-8") for b in islice(gen, 100)] == [
+        "newest",
+        "newest",
+        "newest",
+        "newest",
+    ]
+
+
+def most_common_elements[T](c: Counter[T]) -> list[T]:
+    num_look_at = 2
+    elements = c.most_common(num_look_at)
+    most_common_freq = elements[0][1]
+
+    while True:
+        least_common_freq = elements[-1][1]
+        if least_common_freq != most_common_freq:
+            return [s[0] for s in elements if s[1] == most_common_freq]
+
+        if num_look_at >= len(c):
+            return list(c.keys())
+
+        num_look_at *= 2
+        elements = c.most_common(num_look_at)
+
+
+def test_most_common_elements():
+    assert most_common_elements(Counter("abc")) == ["a", "b", "c"]
+    assert most_common_elements(Counter("aabbc")) == ["a", "b"]
+    assert most_common_elements(Counter("aaabb")) == ["a"]
+
+
+def bpe(s: str, *, num_merges=None, whitespace=False) -> tuple[list[bytes], list[tuple[bytes, bytes]]]:
+    vocab = [bytes([i]) for i in range(0, 256)]
+    vocab.append(b"<|endoftext|>")
+    merges = []
+
+    tokens = pretokenize(s, whitespace=whitespace)
+    word_frequency: Counter[tuple[bytes, ...]] = Counter()
+    for t in tokens:
+        # vocab item becomes a tuple of bytes low -> 'l','o','w', each item in
+        # the tuple is a bytes
+        word_frequency[tuple(bytes([b]) for b in t)] += 1
+
+    merge_num = 0
+    while True:
+        if num_merges and merge_num >= num_merges:
+            break
+
+        freq: Counter[tuple[bytes, bytes]] = Counter()
+        for v in word_frequency:
+            for pair in pairwise(v):
+                freq[pair] += word_frequency[v]
+
+        if not freq:
+            # Every word in our original text has been merged to a single token
+            break
+
+        merger = max(most_common_elements(freq))
+
+        # merge in our vocab now
+        new_frequency: Counter[bytes] = Counter()
+
+        vocab.append(merger[0] + merger[1])
+        merges.append(tuple([merger[0], merger[1]]))
+
+        for v in word_frequency:
+            for pair in pairwise(v):
+                if pair == merger:
+                    break
+            else:
+                new_frequency[v] = word_frequency[v]
+
+            # reconstruct v with the merged entity
+            # we'll just use list operations even though it's dumber, I'm too
+            # lazy to code this right
+            new_v = []
+            i = 0
+            while i < len(v):
+                if i == len(v) - 1:
+                    new_v.append(v[i])
+                elif (v[i], v[i + 1]) == merger:
+                    new_v.append(v[i] + v[i + 1])
+                    i += 1
+                else:
+                    new_v.append(v[i])
+                i += 1
+
+            new_frequency[tuple(new_v)] = word_frequency[v]
+
+        word_frequency = new_frequency
+        merge_num += 1
+
+    return vocab, merges
+
+
+def test_bpe():
+    text = """low low low low low
+lower lower widest widest widest
+newest newest newest newest newest newest"""
+    vocab, merges = bpe(text, num_merges=6, whitespace=True)
+    for b in range(256):
+        assert bytes([b]) in vocab
+        vocab.remove(bytes([b]))
+
+    assert frozenset(vocab) == frozenset([b"<|endoftext|>", b"st", b"est", b"ow", b"low", b"west", b"ne"])
+    assert merges[0:6] == [(b"s", b"t"), (b"e", b"st"), (b"o", b"w"), (b"l", b"ow"), (b"w", b"est"), (b"n", b"e")]
