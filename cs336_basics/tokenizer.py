@@ -1,13 +1,14 @@
+import pickle
 import time
 
 import regex as re
 from copy import copy
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Iterable
 from itertools import islice, pairwise
 from functools import partial
 from io import BytesIO
-from typing import BinaryIO
+from typing import BinaryIO, TextIO
 from multiprocessing import cpu_count, Pool
 
 import os
@@ -278,14 +279,24 @@ def bpe(
     return vocab, merges
 
 
+def serialize_vocab(file_path: str | os.PathLike, vocab: Vocab):
+    with open(file_path, "wb") as f:
+        pickle.dump(vocab, f)
+
+
+def serialize_merges(file_path: str | os.PathLike, merges: MergeList):
+    with open(file_path, "wb") as f:
+        pickle.dump(merges, f)
+
+
 def test_bpe():
     text = BytesIO(
         b"""low low low low low
 lower lower widest widest widest
 newest newest newest newest newest newest"""
     )
-    vocab, merges = bpe(text, vocab_size=256 + 1 + 6, special_tokens=["<|endoftext|>"], whitespace=True)
-    vocab = set(vocab.values())
+    vocab_, merges = bpe(text, vocab_size=256 + 1 + 6, special_tokens=["<|endoftext|>"], whitespace=True)
+    vocab = set(vocab_.values())
 
     for b in range(256):
         assert bytes([b]) in vocab
@@ -293,25 +304,69 @@ newest newest newest newest newest newest"""
 
     assert vocab == frozenset([b"<|endoftext|>", b"st", b"est", b"ow", b"low", b"west", b"ne"])
     assert merges == [(b"s", b"t"), (b"e", b"st"), (b"o", b"w"), (b"l", b"ow"), (b"w", b"est"), (b"n", b"e")]
+    with open("vocab-out.txt", "w") as f:
+        f.write("\n".join([f"{k} -> {v}" for k, v in vocab_.items()]))
+    serialize_vocab("vocab.pickle", vocab_)
+    with open("merges-out.txt", "w") as f:
+        f.write("\n".join([f"{m1} {m2}" for m1, m2 in merges]))
+    serialize_merges("merges.pickle", vocab_)
 
 
-def tokenize(s: str, vocab: dict[int, bytes], merges: MergeList, *, whitespace=False) -> Iterator[bytes]:
-    pretokens = pretokenize(s, whitespace=whitespace)
-    reverse_vocab = {v: k for k, v in vocab.items()}
+class Tokenizer:
+    def __init__(self, vocab: Vocab, merges: MergeList, special_tokens=None):
+        self.vocab = vocab
+        self.merges = merges
+        self.special_tokens = special_tokens
 
-    for p in pretokens:
-        p_bytes = [bytes([b]) for b in p]
-        # apply the merges to the pre-tokens
-        # finally output the tokens
-        for merger in merges:
-            p_bytes, _ = apply_merge(p_bytes, merger)
+    @classmethod
+    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None) -> "Tokenizer":
+        t = Tokenizer()
+        with open(vocab_filepath, "rb") as f:
+            t.vocab = pickle.load(f)
+        with open(merges_filepath, "rb") as f:
+            t.merges = pickle.load(f)
 
-        for b in p_bytes:
-            yield reverse_vocab[b]
+        t.special_tokens = special_tokens
+        return t
+
+    def encode(self, text: str, *, whitespace=False) -> list[int]:
+        pretokens = pretokenize(text, whitespace=whitespace)
+        reverse_vocab = {v: k for k, v in self.vocab.items()}
+        result = []
+
+        for p in pretokens:
+            p_bytes = [bytes([b]) for b in p]
+            # apply the merges to the pre-tokens
+            # finally output the tokens
+            for merger in self.merges:
+                p_bytes, _ = apply_merge(p_bytes, merger)
+
+            for b in p_bytes:
+                result.append(reverse_vocab[b])
+
+        return result
+
+    def encode_iterable(self, f: TextIO, *, whitespace=False) -> Iterator[int]:
+        boundaries = find_chunk_boundaries(
+            f.buffer, desired_num_chunks=cpu_count(), split_special_token=b"<|endoftext|>"
+        )
+        for start, end in zip(boundaries[:-1], boundaries[1:]):
+            f.seek(start)
+            chunk = f.read(end - start)
+            yield from self.encode(chunk, whitespace=whitespace)
+
+    def decode(self, ids: list[int]) -> str:
+        result: bytes = b""
+        for i in ids:
+            result += self.vocab[i]
+
+        return result.decode()
 
 
 def test_tokenize():
     vocab = {0: b" ", 1: b"a", 2: b"c", 3: b"e", 4: b"h", 5: b"t", 6: b"th", 7: b" c", 8: b" a", 9: b"the", 10: b" at"}
     merges = [(b"t", b"h"), (b" ", b"c"), (b" ", b"a"), (b"th", b"e"), (b" a", b"t")]
+    t = Tokenizer(vocab, merges, special_tokens=None)
 
-    assert list(tokenize("the cat ate", vocab, merges)) == [9, 7, 1, 5, 10, 3]
+    assert list(t.encode("the cat ate")) == [9, 7, 1, 5, 10, 3]
+    assert t.decode([9, 7, 1, 5, 10, 3]) == "the cat ate"
