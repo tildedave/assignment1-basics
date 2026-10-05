@@ -591,6 +591,4 @@ def run_train_bpe(
     """
     from cs336_basics.tokenizer import bpe
 
-    # Obviously bad
-    with open(input_path) as f:
-        return bpe(f.read(), vocab_size=vocab_size, special_tokens=special_tokens)
+    return bpe(input_path, vocab_size=vocab_size, special_tokens=special_tokens)
