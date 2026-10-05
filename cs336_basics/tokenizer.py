@@ -98,12 +98,12 @@ MergeList = list[tuple[bytes, bytes]]
 Vocab = dict[int, bytes]
 
 
-def apply_merge(v: bytes, merger: tuple[bytes, bytes]):
+def apply_merge(v: bytes, merger: tuple[bytes, bytes]) -> tuple[bytes, bool]:
     for pair in pairwise(v):
         if pair == merger:
             break
     else:
-        return v
+        return v, False
 
     # reconstruct v with the merged entity
     # we'll just use list operations even though it's dumber, I'm too
@@ -120,7 +120,7 @@ def apply_merge(v: bytes, merger: tuple[bytes, bytes]):
             new_v.append(v[i])
         i += 1
 
-    return tuple(new_v)
+    return tuple(new_v), True
 
 
 def bpe(s: str, *, vocab_size, special_tokens=None, whitespace=False) -> tuple[Vocab, MergeList]:
@@ -143,22 +143,28 @@ def bpe(s: str, *, vocab_size, special_tokens=None, whitespace=False) -> tuple[V
     else:
         pretokens = pretokenize(s, whitespace=whitespace)
 
-    print("pretokenization complete")
     word_frequency: Counter[tuple[bytes, ...]] = Counter()
     for t in pretokens:
         # vocab item becomes a tuple of bytes low -> 'l','o','w', each item in
         # the tuple is a bytes
         word_frequency[tuple(bytes([b]) for b in t)] += 1
 
-    while len(vocab) < vocab_size:
-        freq: Counter[tuple[bytes, bytes]] = Counter()
-        for v in word_frequency:
-            for pair in pairwise(v):
-                freq[pair] += word_frequency[v]
+    freq: Counter[tuple[bytes, bytes]] = Counter()
+    for v in word_frequency:
+        for pair in pairwise(v):
+            freq[pair] += word_frequency[v]
 
+    recalculate_words = []
+
+    while len(vocab) < vocab_size:
         if not freq:
             # Every word in our original text has been merged to a single token
             break
+
+        for v in recalculate_words:
+            for pair in pairwise(v):
+                freq[pair] += word_frequency[v]
+        recalculate_words = []
 
         merger = max(most_common_elements(freq))
 
@@ -171,7 +177,13 @@ def bpe(s: str, *, vocab_size, special_tokens=None, whitespace=False) -> tuple[V
         merges.append(tuple([merger[0], merger[1]]))
 
         for v in word_frequency:
-            new_frequency[apply_merge(v, merger)] = word_frequency[v]
+            new_v, changed = apply_merge(v, merger)
+            if changed:
+                recalculate_words.append(new_v)
+                for pair in pairwise(v):
+                    freq[pair] -= word_frequency[v]
+
+            new_frequency[new_v] = word_frequency[v]
 
         word_frequency = new_frequency
         print(len(vocab))
@@ -204,7 +216,7 @@ def tokenize(s: str, vocab: dict[int, bytes], merges: MergeList, *, whitespace=F
         # apply the merges to the pre-tokens
         # finally output the tokens
         for merger in merges:
-            p_bytes = apply_merge(p_bytes, merger)
+            p_bytes, _ = apply_merge(p_bytes, merger)
 
         for b in p_bytes:
             yield reverse_vocab[b]
