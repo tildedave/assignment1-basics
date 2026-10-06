@@ -8,6 +8,8 @@ from jaxtyping import Float
 
 
 class Linear(nn.Module):
+    weight: Float[Tensor, " out_features in_features"]
+
     def __init__(
         self, in_features: int, out_features: int, device: torch.device | None = None, dtype: torch.dtype | None = None
     ):
@@ -16,11 +18,11 @@ class Linear(nn.Module):
         w = torch.empty(out_features, in_features, **factory_kwargs)
         # trunc_normal_ is not yet validated by code
         stddev = sqrt(2 / (out_features + in_features))
-        weights = torch.nn.init.trunc_normal_(w, mean=0.0, std=stddev, a=-3 * stddev, b=3 * stddev)
-        self.weights = nn.Parameter(weights)
+        weight = torch.nn.init.trunc_normal_(w, mean=0.0, std=stddev, a=-3 * stddev, b=3 * stddev)
+        self.weight = nn.Parameter(weight)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return einsum(self.weights, x, "d_out d_in, ... d_in -> ... d_out")
+        return einsum(self.weight, x, "d_out d_in, ... d_in -> ... d_out")
 
 
 def test_validate_default_weights():
@@ -55,11 +57,11 @@ class Embedding(nn.Module):
         nn.Embedding
         w = torch.empty(num_embeddings, embedding_dim, **factory_kwargs)
         weights = torch.nn.init.trunc_normal_(w, mean=0.0, std=1, a=-3, b=3)
-        self.weights = nn.Parameter(weights)
+        self.weight = nn.Parameter(weights)
 
     def forward(self, token_ids: Float[Tensor, " d_in"]) -> Float[Tensor, " embedding_dim d_in"]:
         # Apparently pytorch does what you'd want here
-        return self.weights[token_ids]
+        return self.weight[token_ids]
 
 
 class RMSNorm(nn.Module):
@@ -68,7 +70,7 @@ class RMSNorm(nn.Module):
     ):
         factory_kwargs = dict(device=device, dtype=dtype)
         super().__init__()
-        self.weights = nn.Parameter(torch.ones(d_model, **factory_kwargs))
+        self.weight = nn.Parameter(torch.ones(d_model, **factory_kwargs))
         self.eps = nn.Parameter(torch.tensor(eps, **factory_kwargs))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -76,6 +78,26 @@ class RMSNorm(nn.Module):
 
         x = x.to(torch.float32)
         rms = (((x * x).mean(dim=-1, keepdim=True)) + self.eps).sqrt()
-        result = x * self.weights / rms
+        result = x * self.weight / rms
 
         return result.to(in_dtype)
+
+
+class SwiGLU(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        d_ff: int,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        factory_kwargs = dict(device=device, dtype=dtype)
+        super().__init__()
+
+        self.w1 = Linear(d_model, d_ff, **factory_kwargs)
+        self.w2 = Linear(d_ff, d_model, **factory_kwargs)
+        self.w3 = Linear(d_model, d_ff, **factory_kwargs)
+
+    def forward(self, x: Float[Tensor, "... d_model"]):
+        a = self.w1(x)
+        return self.w2(a * torch.sigmoid(a) * self.w3(x))
