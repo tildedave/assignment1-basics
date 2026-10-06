@@ -4,9 +4,9 @@ import time
 import regex as re
 from copy import copy
 from collections import Counter
-from collections.abc import Iterator, Iterable
-from itertools import islice, pairwise
-from functools import partial
+from collections.abc import Iterator
+from itertools import islice, pairwise, chain
+from functools import partial, cached_property
 from io import BytesIO
 from typing import BinaryIO, TextIO
 from multiprocessing import cpu_count, Pool
@@ -313,10 +313,12 @@ newest newest newest newest newest newest"""
 
 
 class Tokenizer:
+    special_tokens: list[str]
+
     def __init__(self, vocab: Vocab, merges: MergeList, special_tokens=None):
         self.vocab = vocab
         self.merges = merges
-        self.special_tokens = special_tokens
+        self.special_tokens = special_tokens or []
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None) -> "Tokenizer":
@@ -326,23 +328,33 @@ class Tokenizer:
         with open(merges_filepath, "rb") as f:
             t.merges = pickle.load(f)
 
-        t.special_tokens = special_tokens
+        t.special_tokens = special_tokens or []
         return t
 
     def encode(self, text: str, *, whitespace=False) -> list[int]:
-        pretokens = pretokenize(text, whitespace=whitespace)
         reverse_vocab = {v: k for k, v in self.vocab.items()}
         result = []
 
-        for p in pretokens:
-            p_bytes = [bytes([b]) for b in p]
-            # apply the merges to the pre-tokens
-            # finally output the tokens
-            for merger in self.merges:
-                p_bytes, _ = apply_merge(p_bytes, merger)
+        if self.special_tokens:
+            parts = [p for p in re.split(f"({self.split_re})", text) if p]
+        else:
+            parts = [text]
 
-            for b in p_bytes:
-                result.append(reverse_vocab[b])
+        for part in parts:
+            if part in self.special_tokens:
+                result.append(reverse_vocab[part.encode()])
+                continue
+
+            pretokens = pretokenize(part, whitespace=whitespace)
+            for p in pretokens:
+                p_bytes = [bytes([b]) for b in p]
+                # apply the merges to the pre-tokens
+                # finally output the tokens
+                for merger in self.merges:
+                    p_bytes, _ = apply_merge(p_bytes, merger)
+
+                for b in p_bytes:
+                    result.append(reverse_vocab[b])
 
         return result
 
@@ -360,7 +372,11 @@ class Tokenizer:
         for i in ids:
             result += self.vocab[i]
 
-        return result.decode()
+        return result.decode(errors="replace")
+
+    @cached_property
+    def split_re(self):
+        return "|".join(re.escape(token) for token in sorted(self.special_tokens, key=len, reverse=True))
 
 
 def test_tokenize():
