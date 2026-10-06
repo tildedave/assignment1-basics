@@ -1,9 +1,10 @@
 from math import sqrt
 
 import torch
-from torch import nn
+from torch import nn, Tensor
 from pytest import approx
 from einops import einsum
+from jaxtyping import Float
 
 
 class Linear(nn.Module):
@@ -56,6 +57,25 @@ class Embedding(nn.Module):
         weights = torch.nn.init.trunc_normal_(w, mean=0.0, std=1, a=-3, b=3)
         self.weights = nn.Parameter(weights)
 
-    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+    def forward(self, token_ids: Float[Tensor, " d_in"]) -> Float[Tensor, " embedding_dim d_in"]:
         # Apparently pytorch does what you'd want here
         return self.weights[token_ids]
+
+
+class RMSNorm(nn.Module):
+    def __init__(
+        self, d_model: int, eps: float = 1e-5, device: torch.device | None = None, dtype: torch.dtype | None = None
+    ):
+        factory_kwargs = dict(device=device, dtype=dtype)
+        super().__init__()
+        self.weights = nn.Parameter(torch.ones(d_model, **factory_kwargs))
+        self.eps = nn.Parameter(torch.tensor(eps, **factory_kwargs))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        in_dtype = x.dtype
+
+        x = x.to(torch.float32)
+        rms = (((x * x).mean(dim=-1, keepdim=True)) + self.eps).sqrt()
+        result = x * self.weights / rms
+
+        return result.to(in_dtype)
