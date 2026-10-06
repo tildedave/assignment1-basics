@@ -13,6 +13,8 @@ from multiprocessing import cpu_count, Pool
 
 import os
 
+from .utils import split_stream
+
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
 
@@ -359,12 +361,7 @@ class Tokenizer:
         return result
 
     def encode_iterable(self, f: TextIO, *, whitespace=False) -> Iterator[int]:
-        boundaries = find_chunk_boundaries(
-            f.buffer, desired_num_chunks=cpu_count(), split_special_token=b"<|endoftext|>"
-        )
-        for start, end in zip(boundaries[:-1], boundaries[1:]):
-            f.seek(start)
-            chunk = f.read(end - start)
+        for chunk in split_stream(f, delim="<|endoftext|>"):
             yield from self.encode(chunk, whitespace=whitespace)
 
     def decode(self, ids: list[int]) -> str:
