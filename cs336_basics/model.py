@@ -161,3 +161,9 @@ def test_rope():
     # Validate that R @ R^T = I
     assert torch.allclose(einsum(rope.rotations, rope.rotations, "... x y, ... b y -> ... x b"), torch.eye(2))
     # assert torch.allclose(result.forward(torch.ones(5, 4), torch.ones(5, dtype=int)), expected)
+
+
+def softmax(x, dim):
+    largest, _ = x.max(dim=dim, keepdim=True)
+    xi = torch.exp(x - largest)
+    return xi / xi.sum(dim=dim, keepdim=True)
