@@ -11,3 +11,16 @@ def cross_entropy(
     denom = torch.exp(inputs - largest)
     tensor = torch.log(denom.sum(dim=-1, keepdim=True)) - (inputs - largest)
     return torch.gather(tensor, -1, rearrange(targets, "... -> ... 1")).mean()
+
+
+def perplexity(
+    inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
+) -> Float[Tensor, ""]:
+    """
+    not yet tested ;-)
+    """
+    largest, _ = inputs.max(dim=-1, keepdim=True)
+    denom = torch.exp(inputs - largest)
+    tensor = torch.log(denom.sum(dim=-1, keepdim=True)) - (inputs - largest)
+    losses = torch.gather(tensor, -1, rearrange(targets, "... -> ... 1"))
+    return losses.mean().exp()
