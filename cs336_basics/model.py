@@ -1,9 +1,9 @@
 from math import sqrt
 
 import torch
-from torch import nn, Tensor
+from torch import nn, Tensor, stack, sin, cos
 from pytest import approx
-from einops import einsum
+from einops import einsum, rearrange
 from jaxtyping import Float
 
 
@@ -54,7 +54,6 @@ class Embedding(nn.Module):
         factory_kwargs = dict(device=device, dtype=dtype)
         super().__init__()
 
-        nn.Embedding
         w = torch.empty(num_embeddings, embedding_dim, **factory_kwargs)
         weights = torch.nn.init.trunc_normal_(w, mean=0.0, std=1, a=-3, b=3)
         self.weight = nn.Parameter(weights)
@@ -101,3 +100,68 @@ class SwiGLU(nn.Module):
     def forward(self, x: Float[Tensor, "... d_model"]):
         a = self.w1(x)
         return self.w2(a * torch.sigmoid(a) * self.w3(x))
+
+
+# NOTE: You should set 𝑑ff to approximately 8
+# 3 × 𝑑_model in your implementation, while ensuring that the
+# dimensionality of the inner feed-forward layer is a multiple of 64 to make good use of your
+# hardware.
+
+
+class RoPE(nn.Module):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device: torch.device | None = None):
+        super().__init__()
+        assert d_k % 2 == 0, "must have d_k even"
+        self.theta = theta
+        self.d_k = d_k
+        self.max_seq_len = max_seq_len
+
+        ks = torch.arange(1, d_k / 2 + 1, device=device)
+        exp = (2 * ks - 2) / d_k
+        frequencies = theta ** (-1 * exp)
+        positions = torch.arange(0, max_seq_len)
+        theta = torch.outer(positions, frequencies)
+
+        top = stack(
+            (
+                cos(theta),
+                -1 * sin(theta),
+            ),
+            dim=-1,
+        )
+        bottom = stack(
+            (
+                sin(theta),
+                cos(theta),
+            ),
+            dim=-1,
+        )
+        rotations = stack(
+            (
+                top,
+                bottom,
+            ),
+            dim=-2,
+        )
+        self.register_buffer("rotations", rotations, persistent=False)
+
+    def forward(
+        self, x: Float[Tensor, "... seq_len d_k"], token_positions: Float[Tensor, "... seq_len"]
+    ) -> Float[Tensor, "... seq_len d_k"]:
+        split_x = rearrange(x, "... (a b) -> ... a b", b=2)
+        # print(split_x)
+        # print(self.rotations[token_positions])
+        applied = einsum(self.rotations[token_positions], split_x, "... x z, ... z -> ... x")
+        result = rearrange(applied, "... a b -> ... (a b)")
+        return result
+
+
+def test_rope():
+    result = RoPE(theta=10, d_k=4, max_seq_len=3)
+    # Validate that R @ R^T = I
+    assert torch.allclose(einsum(result.rotations, result.rotations, "... x y, ... b y -> ... x b"), torch.eye(2))
+    assert torch.allclose(
+        result.forward(torch.ones(5, 4), torch.ones(5, dtype=int)), torch.tensor([-0.3012, 1.3818, 0.6394, 1.2614])
+    )
+
+    assert False
