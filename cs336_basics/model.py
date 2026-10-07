@@ -178,9 +178,50 @@ def scaled_dot_product_attention(
 
     d_k = Q.shape[-1]
     QKT = einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") * (d_k**-0.5)
-    QKT = QKT.masked_fill(~mask, -1 * inf)
+    if mask is not None:
+        QKT = QKT.masked_fill(~mask, -inf)
     return einsum(
         softmax(QKT, dim=-1),
         V,
         "... queries keys, ... keys d_z -> ... queries d_z",
     )
+
+
+class MultiheadSelfAttention(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        h: int,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        factory_kwargs = dict(device=device, dtype=dtype)
+        super().__init__()
+        self.d_model = d_model
+        self.h = h
+
+        self.q_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.k_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.v_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.o_proj = Linear(d_model, d_model, **factory_kwargs)
+
+    def forward(
+        self,
+        x: Float[Tensor, "... seq d_model"],
+    ) -> Float[Tensor, "... seq d_model"]:
+        seq = x.shape[-2]
+        mask = torch.ones(
+            (
+                seq,
+                seq,
+            ),
+            dtype=bool,
+            device=x.device,
+        ).tril(diagonal=0)
+
+        q_proj = rearrange(self.q_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
+        k_proj = rearrange(self.k_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
+        v_proj = rearrange(self.v_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
+
+        attention = scaled_dot_product_attention(q_proj, k_proj, v_proj, mask=mask)
+        return self.o_proj(rearrange(attention, "... h seq d_k -> ... seq (h d_k)"))
