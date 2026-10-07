@@ -4,7 +4,7 @@ import torch
 from torch import nn, Tensor, stack, sin, cos
 from pytest import approx
 from einops import einsum, rearrange
-from jaxtyping import Float, Bool
+from jaxtyping import Float, Bool, Int
 
 
 class Linear(nn.Module):
@@ -46,19 +46,18 @@ class Embedding(nn.Module):
 
     def __init__(
         self,
-        num_embeddings: int,
-        embedding_dim: int,  # d_model
+        vocab_size: int,
+        d_model: int,  # d_model
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ):
         factory_kwargs = dict(device=device, dtype=dtype)
         super().__init__()
 
-        w = torch.empty(num_embeddings, embedding_dim, **factory_kwargs)
-        weights = torch.nn.init.trunc_normal_(w, mean=0.0, std=1, a=-3, b=3)
-        self.weight = nn.Parameter(weights)
+        w = torch.empty(vocab_size, d_model, **factory_kwargs)
+        self.weight = nn.Parameter(torch.nn.init.trunc_normal_(w, mean=0.0, std=1, a=-3, b=3))
 
-    def forward(self, token_ids: Float[Tensor, " d_in"]) -> Float[Tensor, " embedding_dim d_in"]:
+    def forward(self, token_ids: Float[Tensor, " d_in"]) -> Float[Tensor, " d_model d_in"]:
         # Apparently pytorch does what you'd want here
         return self.weight[token_ids]
 
@@ -253,3 +252,41 @@ class TransformerBlock(nn.Module):
     def forward(self, input: Float[Tensor, " ... seq_len d_model"]) -> Float[Tensor, " ... seq_len d_model"]:
         partial = input + self.attn(self.ln1(input))
         return partial + self.ffn(self.ln2(partial))
+
+
+class TransformerLM(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        vocab_size: int,
+        context_length: int,
+        num_layers: int,
+        rope: RoPE | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        # 𝑑𝑘 = 𝑑𝑣 = 𝑑model / h
+        assert d_model % num_heads == 0, "d_model must be divisible by num_heads"
+
+        factory_kwargs = dict(device=device, dtype=dtype)
+        super().__init__()
+
+        self.token_embeddings = Embedding(vocab_size, d_model, **factory_kwargs)
+        self.layers = nn.ModuleList(
+            [TransformerBlock(d_model, num_heads, d_ff, rope=rope, **factory_kwargs) for _ in range(num_layers)]
+        )
+        self.ln_final = RMSNorm(d_model, **factory_kwargs)
+        self.lm_head = Linear(d_model, vocab_size, **factory_kwargs)
+
+    def forward(
+        self, in_indices: Int[Tensor, " batch_size sequence_length"]
+    ) -> Float[Tensor, "batch_size sequence_length vocab_size"]:
+        x = self.token_embeddings(in_indices)
+        for layer in self.layers:
+            x = layer(x)
+        x = self.ln_final(x)
+        x = self.lm_head(x)
+
+        return x
