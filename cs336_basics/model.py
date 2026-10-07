@@ -1,10 +1,10 @@
-from math import sqrt
+from math import sqrt, inf
 
 import torch
 from torch import nn, Tensor, stack, sin, cos
 from pytest import approx
 from einops import einsum, rearrange
-from jaxtyping import Float
+from jaxtyping import Float, Bool
 
 
 class Linear(nn.Module):
@@ -167,3 +167,20 @@ def softmax(x, dim):
     largest, _ = x.max(dim=dim, keepdim=True)
     xi = torch.exp(x - largest)
     return xi / xi.sum(dim=dim, keepdim=True)
+
+
+def scaled_dot_product_attention(
+    Q: Float[Tensor, " ... queries d_k"],
+    K: Float[Tensor, " ... keys d_k"],
+    V: Float[Tensor, " ... keys d_v"],
+    mask: Bool[Tensor, " ... queries keys"] | None = None,
+) -> Float[Tensor, " batch_size ... seq_len d_v"]:
+
+    d_k = Q.shape[-1]
+    QKT = einsum(Q, K, "... queries d_k, ... keys d_k -> ... queries keys") * (d_k**-0.5)
+    QKT = QKT.masked_fill(~mask, -1 * inf)
+    return einsum(
+        softmax(QKT, dim=-1),
+        V,
+        "... queries keys, ... keys d_z -> ... queries d_z",
+    )
