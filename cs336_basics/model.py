@@ -70,7 +70,7 @@ class RMSNorm(nn.Module):
         factory_kwargs = dict(device=device, dtype=dtype)
         super().__init__()
         self.weight = nn.Parameter(torch.ones(d_model, **factory_kwargs))
-        self.eps = nn.Parameter(torch.tensor(eps, **factory_kwargs))
+        self.eps = torch.tensor(eps, **factory_kwargs)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         in_dtype = x.dtype
@@ -204,7 +204,7 @@ class MultiheadSelfAttention(nn.Module):
         self.q_proj = Linear(d_model, d_model, **factory_kwargs)
         self.k_proj = Linear(d_model, d_model, **factory_kwargs)
         self.v_proj = Linear(d_model, d_model, **factory_kwargs)
-        self.o_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.output_proj = Linear(d_model, d_model, **factory_kwargs)
         self.rope = rope
 
     def forward(
@@ -223,10 +223,33 @@ class MultiheadSelfAttention(nn.Module):
         q_proj = rearrange(self.q_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
         k_proj = rearrange(self.k_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
         v_proj = rearrange(self.v_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
-        if token_positions is not None:
-            assert self.rope
+        if self.rope is not None:
+            if token_positions is None:
+                token_positions = torch.arange(0, seq, device=x.device)
             q_proj = self.rope(q_proj, token_positions)
             k_proj = self.rope(k_proj, token_positions)
 
         attention = scaled_dot_product_attention(q_proj, k_proj, v_proj, mask=mask)
-        return self.o_proj(rearrange(attention, "... h seq d_k -> ... seq (h d_k)"))
+        return self.output_proj(rearrange(attention, "... h seq d_k -> ... seq (h d_k)"))
+
+
+class TransformerBlock(nn.Module):
+    def __init__(
+        self,
+        d_model: int,
+        num_heads: int,
+        d_ff: int,
+        rope: RoPE | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
+    ):
+        factory_kwargs = dict(device=device, dtype=dtype)
+        super().__init__()
+        self.ffn = SwiGLU(d_model, d_ff, **factory_kwargs)
+        self.attn = MultiheadSelfAttention(d_model, num_heads, rope=rope, **factory_kwargs)
+        self.ln1 = RMSNorm(d_model, **factory_kwargs)
+        self.ln2 = RMSNorm(d_model, **factory_kwargs)
+
+    def forward(self, input: Float[Tensor, " ... seq_len d_model"]) -> Float[Tensor, " ... seq_len d_model"]:
+        partial = input + self.attn(self.ln1(input))
+        return partial + self.ffn(self.ln2(partial))

@@ -32,7 +32,7 @@ def run_linear(
     from cs336_basics.model import Linear
 
     linear = Linear(in_features=d_in, out_features=d_out)
-    linear.load_state_dict(dict(weights=weights))
+    linear.load_state_dict(dict(weight=weights))
     return linear.forward(in_features)
 
 
@@ -58,7 +58,7 @@ def run_embedding(
     from cs336_basics.model import Embedding
 
     embedding = Embedding(num_embeddings=vocab_size, embedding_dim=d_model)
-    embedding.load_state_dict(dict(weights=weights))
+    embedding.load_state_dict(dict(weight=weights))
     return embedding.forward(token_ids)
 
 
@@ -314,7 +314,14 @@ def run_transformer_block(
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
     """
-    raise NotImplementedError
+    from cs336_basics.model import TransformerBlock, RoPE
+
+    d_k = d_model // num_heads
+    rope = RoPE(theta, d_k, max_seq_len)
+    block = TransformerBlock(d_model, num_heads, d_ff, rope=rope)
+    block.load_state_dict(weights)
+
+    return block.forward(in_features)
 
 
 def run_transformer_lm(
