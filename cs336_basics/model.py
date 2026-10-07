@@ -119,20 +119,20 @@ class RoPE(nn.Module):
         ks = torch.arange(1, d_k / 2 + 1, device=device)
         exp = (2 * ks - 2) / d_k
         frequencies = theta ** (-1 * exp)
-        positions = torch.arange(0, max_seq_len)
-        theta = torch.outer(positions, frequencies)
+        positions = torch.arange(0, max_seq_len, device=device)
+        angles = torch.outer(positions, frequencies)
 
         top = stack(
             (
-                cos(theta),
-                -1 * sin(theta),
+                cos(angles),
+                -1 * sin(angles),
             ),
             dim=-1,
         )
         bottom = stack(
             (
-                sin(theta),
-                cos(theta),
+                sin(angles),
+                cos(angles),
             ),
             dim=-1,
         )
@@ -192,6 +192,7 @@ class MultiheadSelfAttention(nn.Module):
         self,
         d_model: int,
         h: int,
+        rope: RoPE | None = None,
         device: torch.device | None = None,
         dtype: torch.dtype | None = None,
     ):
@@ -204,10 +205,10 @@ class MultiheadSelfAttention(nn.Module):
         self.k_proj = Linear(d_model, d_model, **factory_kwargs)
         self.v_proj = Linear(d_model, d_model, **factory_kwargs)
         self.o_proj = Linear(d_model, d_model, **factory_kwargs)
+        self.rope = rope
 
     def forward(
-        self,
-        x: Float[Tensor, "... seq d_model"],
+        self, x: Float[Tensor, "... seq d_model"], token_positions: Float[Tensor, "... seq_len"] | None = None
     ) -> Float[Tensor, "... seq d_model"]:
         seq = x.shape[-2]
         mask = torch.ones(
@@ -222,6 +223,10 @@ class MultiheadSelfAttention(nn.Module):
         q_proj = rearrange(self.q_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
         k_proj = rearrange(self.k_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
         v_proj = rearrange(self.v_proj(x), "... seq (h d_k) -> ... h seq d_k", h=self.h)
+        if token_positions is not None:
+            assert self.rope
+            q_proj = self.rope(q_proj, token_positions)
+            k_proj = self.rope(k_proj, token_positions)
 
         attention = scaled_dot_product_attention(q_proj, k_proj, v_proj, mask=mask)
         return self.o_proj(rearrange(attention, "... h seq d_k -> ... seq (h d_k)"))
