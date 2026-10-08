@@ -45,8 +45,13 @@ class AdamW(torch.optim.Optimizer):
                     continue
 
                 state = self.state[p]
-                m = state.get("m", torch.zeros(p.shape, device=p.device, dtype=p.dtype))
-                v = state.get("v", torch.zeros(p.shape, device=p.device, dtype=p.dtype))
+                m = state.get("m")
+                if m is None:
+                    m = torch.zeros(p.shape, device=p.device, dtype=p.dtype)
+                v = state.get("v")
+                if v is None:
+                    v = torch.zeros(p.shape, device=p.device, dtype=p.dtype)
+
                 t = state.get("t", 1)
 
                 grad: torch.Tensor = p.grad.data
@@ -88,9 +93,6 @@ def gradient_clipping(params: Iterable[torch.nn.Parameter], max_l2_norm: float, 
     total_norm = torch.linalg.norm(torch.stack(grads))
     s = max_l2_norm / (total_norm + eps)
     mult = torch.clamp(s, max=1.0)
-
-    if total_norm < max_l2_norm:
-        return
 
     for p in params_list:
         if p.grad is None:

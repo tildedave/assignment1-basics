@@ -146,10 +146,9 @@ if __name__ == "__main__":
     start_iteration = 0
 
     if args.restore_from_checkpoint:
-        with open(args.restore_from_checkpoint) as f:
-            num_iterations = load_checkpoint(args.restore_from_checkpoint, lm, opt)
-            start_iteration = num_iterations
-            run_name, _ = os.path.basename(args.restore_from_checkpoint).split(".")
+        num_iterations = load_checkpoint(args.restore_from_checkpoint, lm, opt)
+        start_iteration = num_iterations
+        run_name, _ = os.path.basename(args.restore_from_checkpoint).split(".")
         print(f"Resuming run {run_name} at iteration {num_iterations}:\n\tconfig: {training_config}")
     else:
         run_name = coolname.generate_slug()
@@ -167,7 +166,7 @@ if __name__ == "__main__":
             opt.zero_grad()
             batch, target = get_batch(data, args.batch_size, context_length, device_str=args.device)
             num_tokens += batch.numel()
-            result: Float[Tensor, " batch_size sequence_length vocab_size"] = lm.forward(batch)
+            result: Float[Tensor, " batch_size sequence_length vocab_size"] = lm(batch)
             loss = cross_entropy(result, target)
 
             if num_iterations % 10 == 0:
