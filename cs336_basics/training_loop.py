@@ -1,7 +1,9 @@
-import numpy as np
+from typing import IO, BinaryIO
+import os
+import random
+
 import numpy.typing as npt
 import torch
-import random
 
 
 def data_loading(
@@ -22,3 +24,24 @@ def data_loading(
     )
 
     return (slices[..., :-1], slices[..., 1:])
+
+
+def save_checkpoint(
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+    iteration: int,
+    out: str | os.PathLike | BinaryIO | IO[bytes],
+):
+    obj = {"model": model.state_dict(), "optimizer": optimizer.state_dict(), "iteration": iteration}
+    torch.save(obj, out)
+
+
+def load_checkpoint(
+    src: str | os.PathLike | BinaryIO | IO[bytes],
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer,
+) -> int:
+    obj = torch.load(src)
+    model.load_state_dict(obj["model"])
+    optimizer.load_state_dict(obj["optimizer"])
+    return obj["iteration"]
