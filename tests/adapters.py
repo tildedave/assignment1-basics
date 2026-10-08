@@ -407,7 +407,7 @@ def run_transformer_lm(
 
     d_k = d_model // num_heads
     rope = RoPE(rope_theta, d_k, context_length)
-    lm = TransformerLM(d_model, num_heads, d_ff, vocab_size, context_length, num_layers, rope)
+    lm = TransformerLM(d_model, num_heads, d_ff, vocab_size, num_layers, rope)
     lm.load_state_dict(weights)
     return lm(in_indices)
 
@@ -473,9 +473,9 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    from cs336_basics.training_loop import data_loading
+    from cs336_basics.training_loop import get_batch
 
-    return data_loading(dataset, batch_size, context_length, device)
+    return get_batch(dataset, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:

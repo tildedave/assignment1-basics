@@ -8,9 +8,7 @@ from jaxtyping import Float, Int
 from einops import rearrange
 
 
-def cross_entropy(
-    inputs: Float[Tensor, " batch_size vocab_size"], targets: Int[Tensor, " batch_size"]
-) -> Float[Tensor, ""]:
+def cross_entropy(inputs: Float[Tensor, "... vocab_size"], targets: Int[Tensor, "..."]) -> Float[Tensor, ""]:
     largest, _ = inputs.max(dim=-1, keepdim=True)
     denom = torch.exp(inputs - largest)
     tensor = torch.log(denom.sum(dim=-1, keepdim=True)) - (inputs - largest)

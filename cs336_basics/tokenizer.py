@@ -1,6 +1,6 @@
 import pickle
 import time
-
+import argparse
 import regex as re
 from copy import copy
 from collections import Counter
@@ -10,10 +10,11 @@ from functools import partial, cached_property
 from io import BytesIO
 from typing import BinaryIO, TextIO
 from multiprocessing import cpu_count, Pool
-
 import os
 
-from .utils import split_stream
+import numpy as np
+
+from utils import split_stream
 
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
@@ -383,3 +384,33 @@ def test_tokenize():
 
     assert list(t.encode("the cat ate")) == [9, 7, 1, 5, 10, 3]
     assert t.decode([9, 7, 1, 5, 10, 3]) == "the cat ate"
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        prog="CS336 Assignment 1 - Tokenizer",
+        description="Tokenizes a dataset",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("filename", help="Input filename to tokenize")
+    parser.add_argument("-bpe", "--bpe", help="BPE (from run_bpe.py)")
+    parser.add_argument("-o", "--out", help="Output filename")
+    parser.add_argument("--chunk-size", type=int, required=False, default=100_000, help="Chunk size for writing file")
+
+    args = parser.parse_args()
+
+    with open(args.bpe, "rb") as f:
+        bpe_obj = pickle.load(f)
+        vocab = bpe_obj["vocab"]
+        merges = bpe_obj["merges"]
+
+    tokenizer = Tokenizer(vocab, merges, special_tokens=["<|endoftext|>"])
+    with open(args.filename) as f, open(args.out, "wb") as out_f:
+        it = tokenizer.encode_iterable(f)
+
+        chunk_it = islice(it, args.chunk_size)
+        while chunk_it:
+            np_chunk = np.fromiter(chunk_it, dtype=np.uint16)
+            out_f.write(np_chunk.tobytes())
+            print("Wrote chunk")
+            chunk_it = islice(it, args.chunk_size)

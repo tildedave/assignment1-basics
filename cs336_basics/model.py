@@ -261,7 +261,6 @@ class TransformerLM(nn.Module):
         num_heads: int,
         d_ff: int,
         vocab_size: int,
-        context_length: int,
         num_layers: int,
         rope: RoPE | None = None,
         device: torch.device | None = None,
@@ -282,7 +281,7 @@ class TransformerLM(nn.Module):
 
     def forward(
         self, in_indices: Int[Tensor, " batch_size sequence_length"]
-    ) -> Float[Tensor, "batch_size sequence_length vocab_size"]:
+    ) -> Float[Tensor, " batch_size sequence_length vocab_size"]:
         x = self.token_embeddings(in_indices)
         for layer in self.layers:
             x = layer(x)
