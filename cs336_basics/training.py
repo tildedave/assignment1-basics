@@ -1,4 +1,4 @@
-from math import sqrt
+from math import sqrt, cos, pi
 from operator import itemgetter
 
 import torch
@@ -62,3 +62,18 @@ class AdamW(torch.optim.Optimizer):
             state["v"] = v
 
         return loss
+
+
+def learning_rate_schedule(
+    t: int,
+    a_max: float,
+    a_min: float,
+    t_w: int,
+    t_c: int,
+):
+    if t < t_w:
+        return (t / t_w) * a_max
+    if t > t_c:
+        return a_min
+
+    return a_min + (1 / 2) * (1 + cos(pi * (t - t_w) / (t_c - t_w))) * (a_max - a_min)
