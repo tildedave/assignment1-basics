@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from math import sqrt, cos, pi
 from operator import itemgetter
 
@@ -77,3 +78,20 @@ def learning_rate_schedule(
         return a_min
 
     return a_min + (1 / 2) * (1 + cos(pi * (t - t_w) / (t_c - t_w))) * (a_max - a_min)
+
+
+def gradient_clipping(params: Iterable[torch.nn.Parameter], max_l2_norm: float, eps=1e-6):
+    params_list = list(params)
+    grads = [p.grad for p in params_list if p.grad is not None]
+    if not grads:  # weird but OK
+        return
+
+    grads = [g.norm() for g in grads]
+    total_norm = torch.linalg.norm(torch.stack(grads))
+    if total_norm < max_l2_norm:
+        return
+
+    for p in params_list:
+        if p.grad is None:
+            continue
+        p.grad *= max_l2_norm / (total_norm + eps)
