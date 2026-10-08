@@ -44,21 +44,21 @@ class AdamW(torch.optim.Optimizer):
                 if p.grad is None:
                     continue
 
-            state = self.state[p]
-            m = state.get("m", torch.zeros(p.shape, device=p.device, dtype=p.dtype))
-            v = state.get("v", torch.zeros(p.shape, device=p.device, dtype=p.dtype))
-            t = state.get("t", 1)
+                state = self.state[p]
+                m = state.get("m", torch.zeros(p.shape, device=p.device, dtype=p.dtype))
+                v = state.get("v", torch.zeros(p.shape, device=p.device, dtype=p.dtype))
+                t = state.get("t", 1)
 
-            grad: torch.Tensor = p.grad.data
-            a_t = lr * sqrt(1 - beta_2**t) / (1 - beta_1**t)
-            p.data -= lr * weight_decay * p.data
-            m = beta_1 * m + (1 - beta_1) * grad
-            v = beta_2 * v + (1 - beta_2) * grad * grad
-            p.data -= a_t * m / (v.sqrt() + eps)
+                grad: torch.Tensor = p.grad.data
+                a_t = lr * sqrt(1 - beta_2**t) / (1 - beta_1**t)
+                p.data -= lr * weight_decay * p.data
+                m = beta_1 * m + (1 - beta_1) * grad
+                v = beta_2 * v + (1 - beta_2) * grad * grad
+                p.data -= a_t * m / (v.sqrt() + eps)
 
-            state["t"] = t + 1
-            state["m"] = m
-            state["v"] = v
+                state["t"] = t + 1
+                state["m"] = m
+                state["v"] = v
 
         return loss
 
@@ -86,10 +86,13 @@ def gradient_clipping(params: Iterable[torch.nn.Parameter], max_l2_norm: float, 
 
     grads = [g.norm() for g in grads]
     total_norm = torch.linalg.norm(torch.stack(grads))
+    s = max_l2_norm / (total_norm + eps)
+    mult = torch.clamp(s, max=1.0)
+
     if total_norm < max_l2_norm:
         return
 
     for p in params_list:
         if p.grad is None:
             continue
-        p.grad *= max_l2_norm / (total_norm + eps)
+        p.grad *= mult
