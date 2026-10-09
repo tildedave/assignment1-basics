@@ -74,7 +74,6 @@ if __name__ == "__main__":
         "--num-heads", required=False, type=int, help="number of heads - must be divisible by model dimensions"
     )
     parser.add_argument("-l", "--num-layers", type=int, required=False, help="number of layers for the TransformerLM")
-    parser.add_argument("--save-config-file", type=str, required=False, help="save parameters to config file")
 
     parser.add_argument("-d", "--device", default="cpu", help="device for pytorch")
     parser.add_argument("-b1", "--beta1", type=float, default=0.9, help="beta1 hyperparameter")
@@ -111,10 +110,6 @@ if __name__ == "__main__":
             "weight_decay": args.weight_decay,
             "max_gradient": args.max_gradient,
         }
-        if args.save_config_file:
-            with open(args.save_config_file, "w") as f:
-                f.write(json.dumps(training_config))
-                print(f"Saved config to {args.save_config_file}")
 
     from operator import itemgetter
 
@@ -152,7 +147,11 @@ if __name__ == "__main__":
         print(f"Resuming run {run_name} at iteration {num_iterations}:\n\tconfig: {training_config}")
     else:
         run_name = coolname.generate_slug()
-        print(f"Beginning run {run_name}:\n\tconfig: {training_config}")
+        config_filename = os.path.join(args.checkpoint_dir, f"{run_name}.config.json")
+        with open(config_filename, "w") as f:
+            f.write(json.dumps(training_config))
+            print(f"Saved config to {config_filename}")
+        print(f"Beginning run {run_name}:\n\tconfig: {training_config} saved to {config_filename}")
 
     with open(args.filename, "rb") as f:
         data = np.memmap(f, dtype=np.uint16, mode="r")
