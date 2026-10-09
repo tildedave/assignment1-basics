@@ -43,20 +43,24 @@ def save_checkpoint(
     torch.save(obj, out)
 
 
+def fix_orig_mod(state_dict):
+    return {k.replace("_orig_mod.", ""): v for k, v in state_dict.items()}
+
+
 def load_checkpoint(
     src: str | os.PathLike | BinaryIO | IO[bytes],
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
 ) -> int:
     obj = torch.load(src)
-    model.load_state_dict(obj["model"])
-    optimizer.load_state_dict(obj["optimizer"])
+    model.load_state_dict(fix_orig_mod(obj["model"]))
+    optimizer.load_state_dict(fix_orig_mod(obj["optimizer"]))
     return obj["iteration"]
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        prog="CS336 Assignment 1",
+        prog="CS336 Assignment 1 Training Loop",
         description="Runs a training loop on a dataset",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -75,7 +79,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("-l", "--num-layers", type=int, required=False, help="number of layers for the TransformerLM")
 
-    parser.add_argument("-d", "--device", default="cpu", help="device for pytorch")
+    parser.add_argument("-d", "--device", default="mps", help="device for pytorch")
     parser.add_argument("-b1", "--beta1", type=float, default=0.9, help="beta1 hyperparameter")
     parser.add_argument("-b2", "--beta2", type=float, default=0.999, help="beta2 hyperparameter")
     parser.add_argument("-lr", "--lr", type=float, default=1e-3, help="alpha hyperparameter")
@@ -84,8 +88,8 @@ if __name__ == "__main__":
     parser.add_argument("-bs", "--batch-size", type=int, default=32, help="batch size")
     parser.add_argument("-ts", "--training-steps", type=int, default=5_000, help="number of training steps")
     parser.add_argument("-mg", "--max-gradient", type=float, default=1.0, help="max gradient value (for clipping)")
-    parser.add_argument("--checkpoint-frequency", type=int, default=100, help="frequency to checkpoint")
-    parser.add_argument("--restore-from-checkpoint", type=str, help="checkpoint file to restore from")
+    parser.add_argument("--checkpoint-frequency", type=int, default=500, help="frequency to checkpoint")
+    parser.add_argument("--checkpoint", type=str, help="checkpoint file to restore from")
 
     args = parser.parse_args()
 
@@ -140,10 +144,10 @@ if __name__ == "__main__":
     num_iterations = 0
     start_iteration = 0
 
-    if args.restore_from_checkpoint:
-        num_iterations = load_checkpoint(args.restore_from_checkpoint, lm, opt)
+    if args.checkpoint:
+        num_iterations = load_checkpoint(args.checkpoint, lm, opt)
         start_iteration = num_iterations
-        run_name, _ = os.path.basename(args.restore_from_checkpoint).split(".")
+        run_name, _ = os.path.basename(args.checkpoint).split(".")
         print(f"Resuming run {run_name} at iteration {num_iterations}:\n\tconfig: {training_config}")
     else:
         run_name = coolname.generate_slug()
@@ -153,12 +157,14 @@ if __name__ == "__main__":
             print(f"Saved config to {config_filename}")
         print(f"Beginning run {run_name}:\n\tconfig: {training_config} saved to {config_filename}")
 
+    print(f"\tSnapshots saved every {args.checkpoint_frequency} steps")
+    start_time = time.monotonic()
     with open(args.filename, "rb") as f:
         data = np.memmap(f, dtype=np.uint16, mode="r")
 
         while num_iterations < args.training_steps:
             if num_iterations != start_iteration and num_iterations % args.checkpoint_frequency == 0:
-                filename = os.path.join(args.checkpoint_dir, f"{run_name}.{num_iterations}")
+                filename = os.path.join(args.checkpoint_dir, f"{run_name}.snapshot")
                 save_checkpoint(lm, opt, num_iterations, filename)
                 print(f"Saved checkpoint {filename}")
 
@@ -168,9 +174,9 @@ if __name__ == "__main__":
             result: Float[Tensor, " batch_size sequence_length vocab_size"] = lm(batch)
             loss = cross_entropy(result, target)
 
-            if num_iterations % 10 == 0:
+            if num_iterations % 50 == 0:
                 print(
-                    f"Step {num_iterations}: time={time.time()}, loss={loss.cpu().item()}, perplexity={perplexity(result, target).cpu().item()}"
+                    f"Step {num_iterations}: elapsed time (since start)={time.monotonic() - start_time:.2f}s, loss={loss.cpu().item()}, perplexity={perplexity(result, target).cpu().item()}"
                 )
             loss.backward()
 
