@@ -422,9 +422,8 @@ if __name__ == "__main__":
     with open(args.filename) as f, open(args.out, "wb") as out_f:
         it = tokenizer.encode_iterable(f)
 
-        chunk_it = islice(it, args.chunk_size)
-        while chunk_it:
-            np_chunk = np.fromiter(chunk_it, dtype=np.uint16)
+        for chunk in batched(it, args.chunk_size):
+            np_chunk = np.array(chunk, dtype=np.uint16)
             out_f.write(np_chunk.tobytes())
             print("Wrote chunk")
             chunk_it = islice(it, args.chunk_size)
