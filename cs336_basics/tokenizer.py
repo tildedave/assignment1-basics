@@ -5,8 +5,8 @@ import regex as re
 from copy import copy
 from collections import Counter
 from collections.abc import Iterator
-from itertools import islice, pairwise, chain
-from functools import partial, cached_property
+from itertools import islice, pairwise, chain, batched
+from functools import partial, cached_property, cache
 from io import BytesIO
 from typing import BinaryIO, TextIO
 from multiprocessing import cpu_count, Pool
@@ -332,6 +332,7 @@ class Tokenizer:
         self.vocab = vocab
         self.merges = merges
         self.special_tokens = special_tokens or []
+        self.reverse_vocab = {v: k for k, v in self.vocab.items()}
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None) -> "Tokenizer":
@@ -345,7 +346,6 @@ class Tokenizer:
         return t
 
     def encode(self, text: str, *, whitespace=False) -> list[int]:
-        reverse_vocab = {v: k for k, v in self.vocab.items()}
         result = []
 
         if self.special_tokens:
@@ -355,21 +355,25 @@ class Tokenizer:
 
         for part in parts:
             if part in self.special_tokens:
-                result.append(reverse_vocab[part.encode()])
+                result.append(self.reverse_vocab[part.encode()])
                 continue
 
             pretokens = pretokenize(part, whitespace=whitespace)
             for p in pretokens:
-                p_bytes = [bytes([b]) for b in p]
-                # apply the merges to the pre-tokens
-                # finally output the tokens
-                for merger in self.merges:
-                    p_bytes, _ = apply_merge(p_bytes, merger)
-
-                for b in p_bytes:
-                    result.append(reverse_vocab[b])
+                for b in self._encode_pretoken(p):
+                    result.append(self.reverse_vocab[b])
 
         return result
+
+    @cache
+    def _encode_pretoken(self, p):
+        p_bytes = [bytes([b]) for b in p]
+        # apply the merges to the pre-tokens
+        # finally output the tokens
+        for merger in self.merges:
+            p_bytes, _ = apply_merge(p_bytes, merger)
+
+        return p_bytes
 
     def encode_iterable(self, f: TextIO, *, whitespace=False) -> Iterator[int]:
         for chunk in split_stream(f, delim="<|endoftext|>"):
