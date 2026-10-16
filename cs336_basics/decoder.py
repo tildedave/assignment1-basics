@@ -79,7 +79,6 @@ if __name__ == "__main__":
             probs, indices = torch.sort(probabilities, descending=True)
             cutoff_idx = torch.searchsorted(torch.cumsum(probs, dim=-1), args.nucleus)
             final_distribution = probabilities[0 : cutoff_idx + 1]
-            print(final_distribution)
             next_token = indices[torch.multinomial(final_distribution, num_samples=1)]
             prompt = torch.cat([prompt, next_token])
 
